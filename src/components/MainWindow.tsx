@@ -6,11 +6,10 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { exportMarkdownNote, importMarkdownNote } from "../features/importExport/api";
 import { MarkdownPreview } from "../features/markdown/MarkdownPreview";
 import {
-  tagPreviewBlocks,
-  measureBlocks,
   blockIndexAtOffset,
+  measureBlockOffsets,
+  tagPreviewBlocks,
 } from "../features/markdown/scrollSync";
-import type { BlockMeasurement } from "../features/markdown/scrollSync";
 import {
   chooseNotesDirectory,
   getConfig,
@@ -329,7 +328,7 @@ export function MainWindow({
   const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);
   const contentRef = useRef<HTMLTextAreaElement>(null);
   const previewScrollRef = useRef<HTMLDivElement>(null);
-  const blockMeasurements = useRef<BlockMeasurement[]>([]);
+  const blockOffsets = useRef<number[]>([]);
   const scrollSource = useRef<"editor" | "preview" | null>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const externalFileMtimeRef = useRef<number>(0);
@@ -1212,14 +1211,14 @@ export function MainWindow({
     };
   }, [isResizingSplit]);
 
-  // Measure block pixel positions + tag preview DOM after content or viewMode changes
+  // Measure block offsets + tag preview DOM after content or viewMode changes
   useLayoutEffect(() => {
     if (viewMode !== "split") return;
     const textarea = contentRef.current;
     const preview = previewScrollRef.current;
     if (!textarea || !preview) return;
 
-    blockMeasurements.current = measureBlocks(content, textarea);
+    blockOffsets.current = measureBlockOffsets(content, textarea);
     tagPreviewBlocks(preview);
   }, [content, viewMode]);
 
@@ -1232,24 +1231,22 @@ export function MainWindow({
 
   const handleEditorScroll = useCallback(() => {
     if (viewMode !== "split") return;
-    // If preview initiated the scroll, don't echo back
     if (scrollSource.current === "preview") return;
 
     const textarea = contentRef.current;
     const preview = previewScrollRef.current;
     if (!textarea || !preview) return;
 
-    // Lock: editor is the active scroll source
     scrollSource.current = "editor";
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
     scrollTimer.current = setTimeout(() => {
       scrollSource.current = null;
     }, 150);
 
-    const measurements = blockMeasurements.current;
-    if (measurements.length === 0) return;
+    const offsets = blockOffsets.current;
+    if (offsets.length === 0) return;
 
-    const blockIdx = blockIndexAtOffset(measurements, textarea.scrollTop);
+    const blockIdx = blockIndexAtOffset(offsets, textarea.scrollTop);
     const el = preview.querySelector<HTMLElement>(`[data-block-index="${blockIdx}"]`);
     if (!el) return;
 
@@ -1258,14 +1255,12 @@ export function MainWindow({
 
   const handlePreviewScroll = useCallback(() => {
     if (viewMode !== "split") return;
-    // If editor initiated the scroll, don't echo back
     if (scrollSource.current === "editor") return;
 
     const textarea = contentRef.current;
     const preview = previewScrollRef.current;
     if (!textarea || !preview) return;
 
-    // Lock: preview is the active scroll source
     scrollSource.current = "preview";
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
     scrollTimer.current = setTimeout(() => {
@@ -1285,10 +1280,10 @@ export function MainWindow({
       }
     }
 
-    const measurement = blockMeasurements.current[topDomIndex];
-    if (!measurement) return;
+    const offsets = blockOffsets.current;
+    if (topDomIndex >= offsets.length) return;
 
-    textarea.scrollTop = measurement.offset;
+    textarea.scrollTop = offsets[topDomIndex];
   }, [viewMode]);
 
   const handlePinEntry = async () => {
